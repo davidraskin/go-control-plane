@@ -31,16 +31,19 @@ type RBAC_Action int32
 const (
 	RBAC_ALLOW RBAC_Action = 0
 	RBAC_DENY  RBAC_Action = 1
+	RBAC_LOG   RBAC_Action = 2
 )
 
 var RBAC_Action_name = map[int32]string{
 	0: "ALLOW",
 	1: "DENY",
+	2: "LOG",
 }
 
 var RBAC_Action_value = map[string]int32{
 	"ALLOW": 0,
 	"DENY":  1,
+	"LOG":   2,
 }
 
 func (x RBAC_Action) String() string {
