@@ -486,7 +486,17 @@ func (m *Http2ProtocolOptions) Validate() error {
 
 	}
 
-	// no validation rules for StreamErrorOnInvalidHttpMessaging
+	// no validation rules for HiddenEnvoyDeprecatedStreamErrorOnInvalidHttpMessaging
+
+	if v, ok := interface{}(m.GetOverrideStreamErrorOnInvalidHttpMessage()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return Http2ProtocolOptionsValidationError{
+				field:  "OverrideStreamErrorOnInvalidHttpMessage",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
+	}
 
 	for idx, item := range m.GetCustomSettingsParameters() {
 		_, _ = idx, item
@@ -815,10 +825,10 @@ func (m *Http2ProtocolOptions_SettingsParameter) Validate() error {
 
 	if wrapper := m.GetIdentifier(); wrapper != nil {
 
-		if val := wrapper.GetValue(); val < 1 || val > 65536 {
+		if val := wrapper.GetValue(); val < 0 || val > 65535 {
 			return Http2ProtocolOptions_SettingsParameterValidationError{
 				field:  "Identifier",
-				reason: "value must be inside range [1, 65536]",
+				reason: "value must be inside range [0, 65535]",
 			}
 		}
 

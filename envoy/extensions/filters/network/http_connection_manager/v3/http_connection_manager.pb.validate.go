@@ -308,6 +308,16 @@ func (m *HttpConnectionManager) Validate() error {
 
 	// no validation rules for StripMatchingHostPort
 
+	if v, ok := interface{}(m.GetStreamErrorOnInvalidHttpMessage()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return HttpConnectionManagerValidationError{
+				field:  "StreamErrorOnInvalidHttpMessage",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
+	}
+
 	if v, ok := interface{}(m.GetHiddenEnvoyDeprecatedIdleTimeout()).(interface{ Validate() error }); ok {
 		if err := v.Validate(); err != nil {
 			return HttpConnectionManagerValidationError{
@@ -569,6 +579,28 @@ func (m *ResponseMapper) Validate() error {
 		}
 	}
 
+	if len(m.GetHeadersToAdd()) > 1000 {
+		return ResponseMapperValidationError{
+			field:  "HeadersToAdd",
+			reason: "value must contain no more than 1000 item(s)",
+		}
+	}
+
+	for idx, item := range m.GetHeadersToAdd() {
+		_, _ = idx, item
+
+		if v, ok := interface{}(item).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return ResponseMapperValidationError{
+					field:  fmt.Sprintf("HeadersToAdd[%v]", idx),
+					reason: "embedded message failed validation",
+					cause:  err,
+				}
+			}
+		}
+
+	}
+
 	return nil
 }
 
@@ -650,10 +682,15 @@ func (m *Rds) Validate() error {
 		}
 	}
 
-	if len(m.GetRouteConfigName()) < 1 {
-		return RdsValidationError{
-			field:  "RouteConfigName",
-			reason: "value length must be at least 1 bytes",
+	// no validation rules for RouteConfigName
+
+	if v, ok := interface{}(m.GetRdsResourceLocator()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return RdsValidationError{
+				field:  "RdsResourceLocator",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
 		}
 	}
 
@@ -1047,6 +1084,18 @@ func (m *HttpFilter) Validate() error {
 			if err := v.Validate(); err != nil {
 				return HttpFilterValidationError{
 					field:  "TypedConfig",
+					reason: "embedded message failed validation",
+					cause:  err,
+				}
+			}
+		}
+
+	case *HttpFilter_ConfigDiscovery:
+
+		if v, ok := interface{}(m.GetConfigDiscovery()).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return HttpFilterValidationError{
+					field:  "ConfigDiscovery",
 					reason: "embedded message failed validation",
 					cause:  err,
 				}

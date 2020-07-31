@@ -223,6 +223,50 @@ func (m *Bootstrap) Validate() error {
 
 	}
 
+	for idx, item := range m.GetConfigSources() {
+		_, _ = idx, item
+
+		if v, ok := interface{}(item).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return BootstrapValidationError{
+					field:  fmt.Sprintf("ConfigSources[%v]", idx),
+					reason: "embedded message failed validation",
+					cause:  err,
+				}
+			}
+		}
+
+	}
+
+	if v, ok := interface{}(m.GetDefaultConfigSource()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return BootstrapValidationError{
+				field:  "DefaultConfigSource",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
+	}
+
+	// no validation rules for DefaultSocketInterface
+
+	for key, val := range m.GetCertificateProviderInstances() {
+		_ = val
+
+		// no validation rules for CertificateProviderInstances[key]
+
+		if v, ok := interface{}(val).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return BootstrapValidationError{
+					field:  fmt.Sprintf("CertificateProviderInstances[%v]", key),
+					reason: "embedded message failed validation",
+					cause:  err,
+				}
+			}
+		}
+
+	}
+
 	if v, ok := interface{}(m.GetHiddenEnvoyDeprecatedRuntime()).(interface{ Validate() error }); ok {
 		if err := v.Validate(); err != nil {
 			return BootstrapValidationError{
@@ -517,10 +561,41 @@ func (m *Watchdog) Validate() error {
 		}
 	}
 
+	if d := m.GetMaxKillTimeoutJitter(); d != nil {
+		dur, err := ptypes.Duration(d)
+		if err != nil {
+			return WatchdogValidationError{
+				field:  "MaxKillTimeoutJitter",
+				reason: "value is not a valid duration",
+				cause:  err,
+			}
+		}
+
+		gte := time.Duration(0*time.Second + 0*time.Nanosecond)
+
+		if dur < gte {
+			return WatchdogValidationError{
+				field:  "MaxKillTimeoutJitter",
+				reason: "value must be greater than or equal to 0s",
+			}
+		}
+
+	}
+
 	if v, ok := interface{}(m.GetMultikillTimeout()).(interface{ Validate() error }); ok {
 		if err := v.Validate(); err != nil {
 			return WatchdogValidationError{
 				field:  "MultikillTimeout",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
+	}
+
+	if v, ok := interface{}(m.GetMultikillThreshold()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return WatchdogValidationError{
+				field:  "MultikillThreshold",
 				reason: "embedded message failed validation",
 				cause:  err,
 			}
@@ -1004,10 +1079,30 @@ func (m *Bootstrap_DynamicResources) Validate() error {
 		}
 	}
 
+	if v, ok := interface{}(m.GetLdsResourcesLocator()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return Bootstrap_DynamicResourcesValidationError{
+				field:  "LdsResourcesLocator",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
+	}
+
 	if v, ok := interface{}(m.GetCdsConfig()).(interface{ Validate() error }); ok {
 		if err := v.Validate(); err != nil {
 			return Bootstrap_DynamicResourcesValidationError{
 				field:  "CdsConfig",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
+	}
+
+	if v, ok := interface{}(m.GetCdsResourcesLocator()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return Bootstrap_DynamicResourcesValidationError{
+				field:  "CdsResourcesLocator",
 				reason: "embedded message failed validation",
 				cause:  err,
 			}
@@ -1312,6 +1407,16 @@ func (m *RuntimeLayer_RtdsLayer) Validate() error {
 	}
 
 	// no validation rules for Name
+
+	if v, ok := interface{}(m.GetRtdsResourceLocator()).(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return RuntimeLayer_RtdsLayerValidationError{
+				field:  "RtdsResourceLocator",
+				reason: "embedded message failed validation",
+				cause:  err,
+			}
+		}
+	}
 
 	if v, ok := interface{}(m.GetRtdsConfig()).(interface{ Validate() error }); ok {
 		if err := v.Validate(); err != nil {

@@ -66,33 +66,6 @@ func makeMockConfigWatcher() *mockConfigWatcher {
 	}
 }
 
-type callbacks struct {
-	fetchReq      int
-	fetchResp     int
-	callbackError bool
-}
-
-func (c *callbacks) OnStreamOpen(context.Context, int64, string) error {
-	if c.callbackError {
-		return errors.New("stream open error")
-	}
-	return nil
-}
-func (c *callbacks) OnStreamClosed(int64)                                     {}
-func (c *callbacks) OnStreamRequest(int64, *discovery.DiscoveryRequest) error { return nil }
-func (c *callbacks) OnStreamResponse(int64, *discovery.DiscoveryRequest, *discovery.DiscoveryResponse) {
-}
-func (c *callbacks) OnFetchRequest(context.Context, *discovery.DiscoveryRequest) error {
-	if c.callbackError {
-		return errors.New("fetch request error")
-	}
-	c.fetchReq++
-	return nil
-}
-func (c *callbacks) OnFetchResponse(*discovery.DiscoveryRequest, *discovery.DiscoveryResponse) {
-	c.fetchResp++
-}
-
 type mockStream struct {
 	t         *testing.T
 	ctx       context.Context
@@ -158,6 +131,8 @@ const (
 	clusterName  = "cluster0"
 	routeName    = "route0"
 	listenerName = "listener0"
+	secretName   = "secret0"
+	runtimeName  = "runtime0"
 )
 
 var (
@@ -165,15 +140,22 @@ var (
 		Id:      "test-id",
 		Cluster: "test-cluster",
 	}
-	endpoint  = resource.MakeEndpoint(clusterName, 8080)
-	cluster   = resource.MakeCluster(resource.Ads, clusterName)
-	route     = resource.MakeRoute(routeName, clusterName)
-	listener  = resource.MakeHTTPListener(resource.Ads, listenerName, 80, routeName)
-	testTypes = []string{
+	endpoint   = resource.MakeEndpoint(clusterName, 8080)
+	cluster    = resource.MakeCluster(resource.Ads, clusterName)
+	route      = resource.MakeRoute(routeName, clusterName)
+	listener   = resource.MakeHTTPListener(resource.Ads, listenerName, 80, routeName)
+	secret     = resource.MakeSecrets(secretName, "test")[0]
+	runtime    = resource.MakeRuntime(runtimeName)
+	opaque     = &core.Address{}
+	opaqueType = "unknown-type"
+	testTypes  = []string{
 		rsrc.EndpointType,
 		rsrc.ClusterType,
 		rsrc.RouteType,
 		rsrc.ListenerType,
+		rsrc.SecretType,
+		rsrc.RuntimeType,
+		opaqueType,
 	}
 )
 
@@ -199,6 +181,22 @@ func makeResponses() map[string][]cache.RawResponse {
 			Resources: []types.Resource{listener},
 			Request:   discovery.DiscoveryRequest{TypeUrl: rsrc.ListenerType},
 		}},
+		rsrc.SecretType: {{
+			Version:   "5",
+			Resources: []types.Resource{secret},
+			Request:   discovery.DiscoveryRequest{TypeUrl: rsrc.SecretType},
+		}},
+		rsrc.RuntimeType: {{
+			Version:   "6",
+			Resources: []types.Resource{runtime},
+			Request:   discovery.DiscoveryRequest{TypeUrl: rsrc.RuntimeType},
+		}},
+		// Pass-through type (xDS does not exist for this type)
+		opaqueType: {{
+			Version:   "7",
+			Resources: []types.Resource{opaque},
+			Request:   discovery.DiscoveryRequest{TypeUrl: opaqueType},
+		}},
 	}
 }
 
@@ -209,7 +207,7 @@ func TestServerShutdown(t *testing.T) {
 			config.responses = makeResponses()
 			shutdown := make(chan bool)
 			ctx, cancel := context.WithCancel(context.Background())
-			s := server.NewServer(ctx, config, &callbacks{})
+			s := server.NewServer(ctx, config, server.CallbackFuncs{})
 
 			// make a request
 			resp := makeMockStream(t)
@@ -225,6 +223,12 @@ func TestServerShutdown(t *testing.T) {
 					err = s.StreamRoutes(resp)
 				case rsrc.ListenerType:
 					err = s.StreamListeners(resp)
+				case rsrc.SecretType:
+					err = s.StreamSecrets(resp)
+				case rsrc.RuntimeType:
+					err = s.StreamRuntime(resp)
+				case opaqueType:
+					err = s.StreamAggregatedResources(resp)
 				}
 				if err != nil {
 					t.Errorf("Stream() => got %v, want no error", err)
@@ -250,7 +254,7 @@ func TestResponseHandlers(t *testing.T) {
 		t.Run(typ, func(t *testing.T) {
 			config := makeMockConfigWatcher()
 			config.responses = makeResponses()
-			s := server.NewServer(context.Background(), config, &callbacks{})
+			s := server.NewServer(context.Background(), config, server.CallbackFuncs{})
 
 			// make a request
 			resp := makeMockStream(t)
@@ -266,6 +270,12 @@ func TestResponseHandlers(t *testing.T) {
 					err = s.StreamRoutes(resp)
 				case rsrc.ListenerType:
 					err = s.StreamListeners(resp)
+				case rsrc.SecretType:
+					err = s.StreamSecrets(resp)
+				case rsrc.RuntimeType:
+					err = s.StreamRuntime(resp)
+				case opaqueType:
+					err = s.StreamAggregatedResources(resp)
 				}
 				if err != nil {
 					t.Errorf("Stream() => got %v, want no error", err)
@@ -289,7 +299,30 @@ func TestResponseHandlers(t *testing.T) {
 func TestFetch(t *testing.T) {
 	config := makeMockConfigWatcher()
 	config.responses = makeResponses()
-	cb := &callbacks{}
+
+	requestCount := 0
+	responseCount := 0
+	callbackError := false
+
+	cb := server.CallbackFuncs{
+		StreamOpenFunc: func(ctx context.Context, i int64, s string) error {
+			if callbackError {
+				return errors.New("stream open error")
+			}
+			return nil
+		},
+		FetchRequestFunc: func(ctx context.Context, request *discovery.DiscoveryRequest) error {
+			if callbackError {
+				return errors.New("fetch request error")
+			}
+			requestCount++
+			return nil
+		},
+		FetchResponseFunc: func(request *discovery.DiscoveryRequest, response *discovery.DiscoveryResponse) {
+			responseCount++
+		},
+	}
+
 	s := server.NewServer(context.Background(), config, cb)
 	if out, err := s.FetchEndpoints(context.Background(), &discovery.DiscoveryRequest{Node: node}); out == nil || err != nil {
 		t.Errorf("unexpected empty or error for endpoints: %v", err)
@@ -301,6 +334,12 @@ func TestFetch(t *testing.T) {
 		t.Errorf("unexpected empty or error for routes: %v", err)
 	}
 	if out, err := s.FetchListeners(context.Background(), &discovery.DiscoveryRequest{Node: node}); out == nil || err != nil {
+		t.Errorf("unexpected empty or error for listeners: %v", err)
+	}
+	if out, err := s.FetchSecrets(context.Background(), &discovery.DiscoveryRequest{Node: node}); out == nil || err != nil {
+		t.Errorf("unexpected empty or error for listeners: %v", err)
+	}
+	if out, err := s.FetchRuntime(context.Background(), &discovery.DiscoveryRequest{Node: node}); out == nil || err != nil {
 		t.Errorf("unexpected empty or error for listeners: %v", err)
 	}
 
@@ -331,9 +370,15 @@ func TestFetch(t *testing.T) {
 	if out, err := s.FetchListeners(context.Background(), nil); out != nil {
 		t.Errorf("expected empty on empty request: %v", err)
 	}
+	if out, err := s.FetchSecrets(context.Background(), nil); out != nil {
+		t.Errorf("expected empty on empty request: %v", err)
+	}
+	if out, err := s.FetchRuntime(context.Background(), nil); out != nil {
+		t.Errorf("expected empty on empty request: %v", err)
+	}
 
 	// send error from callback
-	cb.callbackError = true
+	callbackError = true
 	if out, err := s.FetchEndpoints(context.Background(), &discovery.DiscoveryRequest{Node: node}); out != nil || err == nil {
 		t.Errorf("expected empty or error due to callback error")
 	}
@@ -348,11 +393,11 @@ func TestFetch(t *testing.T) {
 	}
 
 	// verify fetch callbacks
-	if want := 8; cb.fetchReq != want {
-		t.Errorf("unexpected number of fetch requests: got %d, want %d", cb.fetchReq, want)
+	if want := 10; requestCount != want {
+		t.Errorf("unexpected number of fetch requests: got %d, want %d", requestCount, want)
 	}
-	if want := 4; cb.fetchResp != want {
-		t.Errorf("unexpected number of fetch responses: got %d, want %d", cb.fetchResp, want)
+	if want := 6; responseCount != want {
+		t.Errorf("unexpected number of fetch responses: got %d, want %d", responseCount, want)
 	}
 }
 
@@ -361,7 +406,7 @@ func TestWatchClosed(t *testing.T) {
 		t.Run(typ, func(t *testing.T) {
 			config := makeMockConfigWatcher()
 			config.closeWatch = true
-			s := server.NewServer(context.Background(), config, &callbacks{})
+			s := server.NewServer(context.Background(), config, server.CallbackFuncs{})
 
 			// make a request
 			resp := makeMockStream(t)
@@ -385,7 +430,7 @@ func TestSendError(t *testing.T) {
 		t.Run(typ, func(t *testing.T) {
 			config := makeMockConfigWatcher()
 			config.responses = makeResponses()
-			s := server.NewServer(context.Background(), config, &callbacks{})
+			s := server.NewServer(context.Background(), config, server.CallbackFuncs{})
 
 			// make a request
 			resp := makeMockStream(t)
@@ -410,7 +455,7 @@ func TestStaleNonce(t *testing.T) {
 		t.Run(typ, func(t *testing.T) {
 			config := makeMockConfigWatcher()
 			config.responses = makeResponses()
-			s := server.NewServer(context.Background(), config, &callbacks{})
+			s := server.NewServer(context.Background(), config, server.CallbackFuncs{})
 
 			resp := makeMockStream(t)
 			resp.recv <- &discovery.DiscoveryRequest{
@@ -461,22 +506,20 @@ func TestAggregatedHandlers(t *testing.T) {
 		Node:    node,
 		TypeUrl: rsrc.ListenerType,
 	}
+	// Delta compress node
 	resp.recv <- &discovery.DiscoveryRequest{
-		Node:    node,
 		TypeUrl: rsrc.ClusterType,
 	}
 	resp.recv <- &discovery.DiscoveryRequest{
-		Node:          node,
 		TypeUrl:       rsrc.EndpointType,
 		ResourceNames: []string{clusterName},
 	}
 	resp.recv <- &discovery.DiscoveryRequest{
-		Node:          node,
 		TypeUrl:       rsrc.RouteType,
 		ResourceNames: []string{routeName},
 	}
 
-	s := server.NewServer(context.Background(), config, &callbacks{})
+	s := server.NewServer(context.Background(), config, server.CallbackFuncs{})
 	go func() {
 		if err := s.StreamAggregatedResources(resp); err != nil {
 			t.Errorf("StreamAggregatedResources() => got %v, want no error", err)
@@ -510,7 +553,7 @@ func TestAggregatedHandlers(t *testing.T) {
 
 func TestAggregateRequestType(t *testing.T) {
 	config := makeMockConfigWatcher()
-	s := server.NewServer(context.Background(), config, &callbacks{})
+	s := server.NewServer(context.Background(), config, server.CallbackFuncs{})
 	resp := makeMockStream(t)
 	resp.recv <- &discovery.DiscoveryRequest{Node: node}
 	if err := s.StreamAggregatedResources(resp); err == nil {
@@ -523,7 +566,12 @@ func TestCallbackError(t *testing.T) {
 		t.Run(typ, func(t *testing.T) {
 			config := makeMockConfigWatcher()
 			config.responses = makeResponses()
-			s := server.NewServer(context.Background(), config, &callbacks{callbackError: true})
+
+			s := server.NewServer(context.Background(), config, server.CallbackFuncs{
+				StreamOpenFunc: func(ctx context.Context, i int64, s string) error {
+					return errors.New("stream open error")
+				},
+			})
 
 			// make a request
 			resp := makeMockStream(t)
